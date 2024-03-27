@@ -22,9 +22,9 @@ default_args = {
 }
 
 dag = DAG(
-    'bunjang_crawler',
+    'bunjang_crawler_test',
     default_args=default_args,
-    description='Bunjang crawler DAG',
+    description='Bunjang crawler DAG test',
     schedule_interval='0 12 * * *',  # 한국 시간 기준 매일 낮 12시에 실행되도록 cron 표현식 사용
     catchup=False,  # 과거의 실행을 생략하고 현재 시점부터 실행
 )
