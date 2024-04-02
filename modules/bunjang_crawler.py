@@ -2,6 +2,9 @@ import requests
 from urllib.parse import quote
 import json
 import os
+import threading
+import time
+
 
 def get_total_count(brands, category_id):
     base_url = "https://api.bunjang.co.kr/api/1/find_v2.json"
@@ -52,24 +55,31 @@ def get_product_data(brands, category_id, page):
 
     return data["no_result"], data["categories"][0]["count"], data["list"], product_list
 
-def update_products(all_products, new_products):
+
+def update_products(all_products, new_products, brand_names):
+    brand_name_list = [brand[0] for brand in brand_names.items()]
+
     for new_product in new_products:
         for product in all_products:
             if product["pid"] == new_product["pid"]:
-                for brand in new_product["brands"]:
-                    if brand not in product["brands"]:
-                        product["brands"].append(brand)
-                for update in new_product["price_updates"]:
-                    update_time = list(update.keys())[0]
-                    if update_time not in [list(p.keys())[0] for p in product["price_updates"]]:
-                        product["price_updates"].insert(0, update)
                 if new_product["status"] != product["status"]:
                     product["status"] = new_product["status"]
+
+                new_update_time = list(new_product["price_updates"][0].keys())[0]
+                if new_update_time not in [list(p.keys())[0] for p in product["price_updates"]]:
+                    product["price_updates"].insert(0, {
+                        new_update_time: list(new_product["price_updates"][0].values())[0]})
+
+                for brand in new_product["brands"]:
+                    if brand in brand_name_list and brand not in product["brands"]:
+                        product["brands"].append(brand)
                 break
         else:
+            new_product["brands"] = [brand for brand in new_product["brands"] if brand in brand_name_list]
             all_products.append(new_product)
 
     return all_products
+
 
 def save_to_json(data, filename):
     with open(filename, "w", encoding="utf-8") as file:
@@ -116,7 +126,7 @@ def collect_and_filter_data(brands, output_file):
         while True:
             print(f"{page + 1} 페이지 데이터 수집 중...")
             no_result, total_count, products, collected_products = get_product_data(brands, category_id, page)
-            filtered_products.extend(filter_products(collected_products))
+            filtered_products.extend(filter_products(collected_products, brands[0]))
 
             if no_result:
                 break
@@ -129,22 +139,69 @@ def collect_and_filter_data(brands, output_file):
     print(f"브랜드 {brands[0]} - 필터링 후 남은 제품 수: {len(filtered_products)}")
     print()
 
-def filter_products(products):
+def filter_products(products, brand_name):
     filtered_products = []
     for product in products:
         price_updates = product["price_updates"]
         latest_price = list(price_updates[0].values())[0]
-        if not any(brand in product["name"] for brand in product["brands"]) or not latest_price.isdigit() or latest_price[-1] != "0" or int(latest_price) < 10000:
-            continue
-        filtered_products.append(product)
+        if brand_name in product["name"] and latest_price.isdigit() and latest_price[-1] == "0" and int(latest_price) >= 10000:
+            product["brands"] = [brand_name]
+            filtered_products.append(product)
     return filtered_products
 
-def merge_results(input_dir, output_file):
+
+
+
+
+
+
+def merge_results(input_dir, output_file, lock, brand):
+    print(f"Input directory: {input_dir}")
+    print(f"Output file: {output_file}")
+    print(f"Merging data for brand: {brand}")
+
     all_products = []
-    for filename in os.listdir(input_dir):
-        if filename.endswith(".json"):
-            with open(os.path.join(input_dir, filename), "r", encoding="utf-8") as file:
-                products = json.load(file)
-                all_products = update_products(all_products, products)
-    save_to_json(all_products, output_file)
-    print("모든 브랜드 데이터 병합 및 업데이트 완료")
+
+    # 기존 파일이 있는 경우 읽어옴
+    if os.path.exists(output_file):
+        print(f"Reading existing file: {output_file}")
+        with open(output_file, "r", encoding="utf-8") as file:
+            lock.acquire()
+            try:
+                all_products = json.load(file)
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse existing file: {e}")
+                all_products = []
+            finally:
+                lock.release()
+    else:
+        print(f"Creating new file: {output_file}")
+
+    # 특정 브랜드 파일 읽어와서 병합
+    brand_file = os.path.join(input_dir, f"{brand}_products.json")
+    print(f"Reading brand file: {brand_file}")
+    with open(brand_file, "r", encoding="utf-8") as file:
+        try:
+            brand_products = json.load(file)
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse brand file: {brand_file}, error: {e}")
+            brand_products = []
+
+        # 기존 데이터와 중복되지 않는 제품만 추가
+        for product in brand_products:
+            if product not in all_products:
+                all_products.append(product)
+
+    # 병합된 데이터를 파일로 저장
+    print(f"Saving merged data to: {output_file}")
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, "w", encoding="utf-8") as file:
+        lock.acquire()
+        try:
+            json.dump(all_products, file, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Failed to save merged data: {e}")
+        finally:
+            lock.release()
+
+    print(f"Merge completed for brand: {brand}")

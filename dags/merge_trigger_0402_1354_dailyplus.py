@@ -4,16 +4,13 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from datetime import datetime, timedelta
 from pytz import timezone
 import json
-import requests
 import sys
 import os
-import threading
 
 sys.path.append('/opt/airflow/modules')
-from bunjang_crawler import collect_and_filter_data, merge_results
+from bunjang_crawler import collect_and_filter_data, save_to_json, update_products
 
 KST = timezone('Asia/Seoul')
-
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
@@ -25,12 +22,18 @@ default_args = {
 }
 
 dag = DAG(
-    'merge_trigger_0402_0028',
+    'merge_trigger_v1',
     default_args=default_args,
     description='Bunjang crawler DAG with merge trigger',
     schedule_interval='0 12 * * *',
     catchup=False,
 )
+
+
+def crawl_and_filter_brand(brand, **kwargs):
+    today = datetime.now().strftime("%Y%m%d")
+    output_file = f"/opt/airflow/output/{brand[0]}_{today}_products.json"
+    collect_and_filter_data(brand, output_file)
 
 
 def compare_brand_data(brand, **kwargs):
@@ -45,17 +48,14 @@ def compare_brand_data(brand, **kwargs):
     if os.path.exists(yesterday_file):
         with open(yesterday_file, "r", encoding="utf-8") as file:
             yesterday_data = json.load(file)
+
+        updated_data = update_products(yesterday_data, today_data)
+        output_file = f"/opt/airflow/output/{brand[0]}_update_{today}.json"
+        save_to_json(updated_data, output_file)
     else:
-        yesterday_data = []
+        output_file = f"/opt/airflow/output/{brand[0]}_update_{today}.json"
+        save_to_json(today_data, output_file)
 
-    updated_data = update_products(yesterday_data, today_data)
-    output_file = f"/opt/airflow/output/{brand[0]}_update_{today}.json"
-    save_to_json(updated_data, output_file)
-
-def crawl_and_filter_brand(brand, **kwargs):
-    today = datetime.now().strftime("%Y%m%d")
-    output_file = f"/opt/airflow/output/{brand[0]}_{today}_products.json"
-    collect_and_filter_data(brand, output_file)
 
 with open("/opt/airflow/data/brands_test.json", "r", encoding="utf-8") as file:
     brand_names = json.load(file)
@@ -68,35 +68,18 @@ for brand in brand_names.items():
         dag=dag,
     )
 
+    compare_task = PythonOperator(
+        task_id=f"compare_brand_data_{brand[0]}",
+        python_callable=compare_brand_data,
+        op_kwargs={"brand": brand},
+        dag=dag,
+    )
+
     trigger_merge_task = TriggerDagRunOperator(
         task_id=f"trigger_merge_{brand[0]}",
-        trigger_dag_id="merge_0402_0028",
+        trigger_dag_id="merge_v1",
         conf={"brand": brand[0]},
         dag=dag,
     )
 
-    crawl_task >> trigger_merge_task
-
-merge_lock = threading.Lock()
-
-merge_dag = DAG(
-    'merge_0402_0028',
-    default_args=default_args,
-    description='Bunjang crawler merge DAG',
-    schedule_interval=None,
-    max_active_runs=1,  # 추가: 동시에 실행되는 DAG 런 수를 1로 제한
-)
-
-def merge_results_task(**kwargs):
-    brand = kwargs['dag_run'].conf['brand']
-    input_dir = "/opt/airflow/output"
-    output_file = "/opt/airflow/output/all_products.json"
-    merge_results(input_dir, output_file, merge_lock, brand)
-
-merge_task = PythonOperator(
-    task_id='merge_results',
-    python_callable=merge_results_task,
-    provide_context=True,
-    dag=merge_dag,
-    pool='merge_pool',  # 추가: merge_pool 풀을 사용하도록 설정
-)
+    crawl_task >> compare_task >> trigger_merge_task
