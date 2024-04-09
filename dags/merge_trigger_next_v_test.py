@@ -8,13 +8,14 @@ import sys
 import os
 
 sys.path.append('/opt/airflow/modules')
-from bunjang_crawler import collect_and_filter_data, save_to_json, update_products
+from bunjang_crawler import collect_and_filter_data, save_to_json, update_products,get_updated_products
 
 KST = timezone('Asia/Seoul')
+
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'start_date': datetime(2023, 3, 27, 12, 0, tzinfo=KST),
+    'start_date': datetime(2023, 1, 1, 0, 30, tzinfo=KST),
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 1,
@@ -22,13 +23,12 @@ default_args = {
 }
 
 dag = DAG(
-    'merge_trigger_v2',
+    'merge_trigger_v3_test',
     default_args=default_args,
     description='Bunjang crawler DAG with merge trigger',
-    schedule_interval='0 12 * * *',
+    schedule_interval='30 0 * * *',
     catchup=False,
 )
-
 
 def crawl_and_filter_brand(brand, **kwargs):
     today = datetime.now().strftime("%Y%m%d")
@@ -49,7 +49,7 @@ def compare_brand_data(brand, **kwargs):
         with open(yesterday_file, "r", encoding="utf-8") as file:
             yesterday_data = json.load(file)
 
-        updated_data = update_products(yesterday_data, today_data)
+        updated_data = get_updated_products(yesterday_data, today_data)
         output_file = f"/opt/airflow/output/{brand[0]}_update_{today}.json"
         save_to_json(updated_data, output_file)
     else:
@@ -77,7 +77,7 @@ for brand in brand_names.items():
 
     trigger_merge_task = TriggerDagRunOperator(
         task_id=f"trigger_merge_{brand[0]}",
-        trigger_dag_id="merge_v2",
+        trigger_dag_id="merge_v3_test",
         conf={"brand": brand[0]},
         dag=dag,
     )

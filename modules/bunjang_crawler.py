@@ -56,9 +56,7 @@ def get_product_data(brands, category_id, page):
     return data["no_result"], data["categories"][0]["count"], data["list"], product_list
 
 
-def update_products(all_products, new_products, brand_names):
-    brand_name_list = [brand[0] for brand in brand_names.items()]
-
+def update_products(all_products, new_products):
     for new_product in new_products:
         for product in all_products:
             if product["pid"] == new_product["pid"]:
@@ -71,16 +69,31 @@ def update_products(all_products, new_products, brand_names):
                         new_update_time: list(new_product["price_updates"][0].values())[0]})
 
                 for brand in new_product["brands"]:
-                    if brand in brand_name_list and brand not in product["brands"]:
+                    if brand not in product["brands"]:
                         product["brands"].append(brand)
+
                 break
         else:
-            new_product["brands"] = [brand for brand in new_product["brands"] if brand in brand_name_list]
             all_products.append(new_product)
 
     return all_products
+def get_updated_products(yesterday_data, today_data):
+    updated_data = []
 
+    for today_product in today_data:
+        for yesterday_product in yesterday_data:
+            if today_product["pid"] == yesterday_product["pid"]:
+                if (
+                    today_product["status"] != yesterday_product["status"] or
+                    today_product["price_updates"][0] != yesterday_product["price_updates"][0] or
+                    set(today_product["brands"]) != set(yesterday_product["brands"])
+                ):
+                    updated_data.append(today_product)
+                break
+        else:
+            updated_data.append(today_product)
 
+    return updated_data
 def save_to_json(data, filename):
     with open(filename, "w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=4)
