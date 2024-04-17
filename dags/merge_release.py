@@ -2,7 +2,6 @@ from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
 from datetime import datetime, timedelta
 from pytz import timezone
-from cassandra.cluster import Cluster
 import json
 import os
 import threading
@@ -22,52 +21,40 @@ default_args = {
 }
 
 dag = DAG(
-    'merge_v3_test',
+    'merge_release',
     default_args=default_args,
     description='Bunjang crawler merge DAG',
     schedule_interval=None,
     max_active_runs=1,
 )
 
-
-
 def merge_results_task(**kwargs):
     brand = kwargs['dag_run'].conf.get('brand', 'default_brand')
     today = datetime.now().strftime("%Y%m%d")
     input_file = f"/opt/airflow/output/{brand}_update_{today}.json"
+    output_file = "/opt/airflow/output/all_products.json"
 
     print(f"Starting merge task for brand: {brand}")
     print(f"Input file: {input_file}")
+    print(f"Output file: {output_file}")
 
-    # Cassandra 클러스터에 연결
-    cluster = Cluster(['cassandra'])
-    session = cluster.connect('bunjang')
-
-    # Update 파일 읽기
     with open(input_file, "r", encoding="utf-8") as file:
         update_data = json.load(file)
         print(f"Loaded {len(update_data)} records from {input_file}")
 
-    # Cassandra에서 데이터 업데이트
-    for product in update_data:
-        session.execute(
-            """
-            UPDATE products
-            SET brands = %s, name = %s, price_updates = %s, product_image = %s, status = %s, category_id = %s
-            WHERE pid = %s
-            """,
-            (
-                product['brands'],
-                product['name'],
-                product['price_updates'],
-                product['product_image'],
-                product['status'],
-                product['category_id'],
-                product['pid']
-            )
-        )
+    if os.path.exists(output_file):
+        with open(output_file, "r", encoding="utf-8") as file:
+            all_products = json.load(file)
+            print(f"Loaded {len(all_products)} records from {output_file}")
+    else:
+        all_products = []
+        print(f"Created new {output_file} file")
 
-    print(f"Updated {len(update_data)} records in Cassandra")
+    updated_products = update_products(all_products, update_data)
+    print(f"Updated {len(updated_products)} records")
+
+    save_to_json(updated_products, output_file)
+    print(f"Saved {len(updated_products)} records to {output_file}")
     print(f"Merge task completed for brand: {brand}")
 
 merge_task = PythonOperator(
