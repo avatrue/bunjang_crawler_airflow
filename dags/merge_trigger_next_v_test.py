@@ -10,12 +10,10 @@ import os
 sys.path.append('/opt/airflow/modules')
 from bunjang_crawler import collect_and_filter_data, save_to_json, update_products,get_updated_products
 
-KST = timezone('Asia/Seoul')
-
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    'start_date': datetime(2023, 1, 1, 0, 30, tzinfo=KST),
+    'start_date': datetime(2023, 1, 1, 14, 30),
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 1,
@@ -26,7 +24,7 @@ dag = DAG(
     'merge_trigger_v3_test',
     default_args=default_args,
     description='Bunjang crawler DAG with merge trigger',
-    schedule_interval='30 0 * * *',
+    schedule_interval='30 14 * * *',
     catchup=False,
 )
 
@@ -66,6 +64,7 @@ for brand in brand_names.items():
         python_callable=crawl_and_filter_brand,
         op_kwargs={"brand": brand},
         dag=dag,
+        pool='merge_trigger_pool',
     )
 
     compare_task = PythonOperator(
@@ -73,6 +72,7 @@ for brand in brand_names.items():
         python_callable=compare_brand_data,
         op_kwargs={"brand": brand},
         dag=dag,
+        pool='merge_trigger_pool',
     )
 
     trigger_merge_task = TriggerDagRunOperator(
@@ -80,6 +80,7 @@ for brand in brand_names.items():
         trigger_dag_id="merge_v3_test",
         conf={"brand": brand[0]},
         dag=dag,
+        pool='merge_trigger_pool',
     )
 
     crawl_task >> compare_task >> trigger_merge_task
