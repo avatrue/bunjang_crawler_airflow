@@ -8,8 +8,8 @@ import sys
 import os
 
 sys.path.append('/opt/airflow/modules')
-from bunjang_crawler import collect_and_filter_data, save_to_json, update_products,get_updated_products
 
+from bunjang_crawler import collect_and_filter_data, save_to_json, update_products, get_updated_products
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,

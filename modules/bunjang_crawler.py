@@ -50,27 +50,31 @@ def get_product_list(brands, category_id, page):
     product_list = parse_product_data(products, brands)
     return product_list
 
+
 def update_products(all_products, new_products):
+    all_products_dict = {product["pid"]: product for product in all_products}
+
     for new_product in new_products:
-        for product in all_products:
-            if product["pid"] == new_product["pid"]:
-                if new_product["status"] != product["status"]:
-                    product["status"] = new_product["status"]
+        pid = new_product["pid"]
+        if pid in all_products_dict:
+            product = all_products_dict[pid]
 
-                new_update_time = list(new_product["price_updates"][0].keys())[0]
-                if new_update_time not in [list(p.keys())[0] for p in product["price_updates"]]:
-                    product["price_updates"].insert(0, {
-                        new_update_time: list(new_product["price_updates"][0].values())[0]})
+            if new_product["status"] != product["status"]:
+                product["status"] = new_product["status"]
 
-                for brand in new_product["brands"]:
-                    if brand not in product["brands"]:
-                        product["brands"].append(brand)
+            new_update_time = list(new_product["price_updates"][0].keys())[0]
+            if new_update_time not in [list(p.keys())[0] for p in product["price_updates"]]:
+                product["price_updates"].insert(0, {
+                    new_update_time: list(new_product["price_updates"][0].values())[0]
+                })
 
-                break
+            for brand in new_product["brands"]:
+                if brand not in product["brands"]:
+                    product["brands"].append(brand)
         else:
-            all_products.append(new_product)
+            all_products_dict[pid] = new_product
 
-    return all_products
+    return list(all_products_dict.values())
 
 def get_updated_products(yesterday_data, today_data):
     updated_data = []
@@ -123,12 +127,15 @@ def collect_and_filter_data(brands, output_file):
         while True:
             print(f"{page + 1} 페이지 데이터 수집 중...")
             data, no_result, total_count = send_api_request(brands, category_id, page)
+
+            if no_result:
+                break
+
             products = data["list"]
             collected_products = parse_product_data(products, brands)
             filtered_products.extend(filter_products(collected_products, brands[0]))
 
-            if no_result:
-                break
+
 
             page += 1
             if page == 300:
@@ -144,4 +151,57 @@ def filter_products(products, brand_name):
         price_updates = product["price_updates"]
         latest_price = list(price_updates[0].values())[0]
         if brand_name in product["name"] and latest_price.isdigit() and latest_price[-1] == "0" and int(latest_price) >= 10000:
-            pro
+            product["brands"] = [brand_name]
+            filtered_products.append(product)
+    return filtered_products
+
+def merge_results(input_dir, output_file, lock, brand):
+    print(f"Input directory: {input_dir}")
+    print(f"Output file: {output_file}")
+    print(f"Merging data for brand: {brand}")
+
+    all_products = []
+
+    # 기존 파일이 있는 경우 읽어옴
+    if os.path.exists(output_file):
+        print(f"Reading existing file: {output_file}")
+        with open(output_file, "r", encoding="utf-8") as file:
+            lock.acquire()
+            try:
+                all_products = json.load(file)
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse existing file: {e}")
+                all_products = []
+            finally:
+                lock.release()
+    else:
+        print(f"Creating new file: {output_file}")
+
+    # 특정 브랜드 파일 읽어와서 병합
+    brand_file = os.path.join(input_dir, f"{brand}_products.json")
+    print(f"Reading brand file: {brand_file}")
+    with open(brand_file, "r", encoding="utf-8") as file:
+        try:
+            brand_products = json.load(file)
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse brand file: {brand_file}, error: {e}")
+            brand_products = []
+
+        # 기존 데이터와 중복되지 않는 제품만 추가
+        for product in brand_products:
+            if product not in all_products:
+                all_products.append(product)
+
+    # 병합된 데이터를 파일로 저장
+    print(f"Saving merged data to: {output_file}")
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, "w", encoding="utf-8") as file:
+        lock.acquire()
+        try:
+            json.dump(all_products, file, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Failed to save merged data: {e}")
+        finally:
+            lock.release()
+
+    print(f"Merge completed for brand: {brand}")
